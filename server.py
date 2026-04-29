@@ -1,23 +1,32 @@
 import os, subprocess, tempfile, shutil, time, zipfile, io
-from flask import Flask, request, send_file, jsonify, Response
+from flask import Flask, request, send_file, jsonify, Response, make_response
 
 app = Flask(__name__)
-ALLOWED_ORIGINS = "*"
+ALLOWED_ORIGIN = "*"
+
+def _add_cors(resp):
+    resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+    resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    resp.headers["Access-Control-Max-Age"] = "86400"
+    resp.headers["Vary"] = "Origin"
+    return resp
+
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        resp = make_response("", 204)
+        return _add_cors(resp)
 
 @app.after_request
 def cors(resp):
-    resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGINS
-    resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-    return resp
+    return _add_cors(resp)
 
-@app.route("/", methods=["GET", "OPTIONS"])
+@app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "libreoffice-converter", "version": "2"})
+    return jsonify({"status": "ok", "service": "libreoffice-converter", "version": "3"})
 
 def shrink_pptx(in_bytes, max_image_kb=300):
-    """Pre-compress images inside a .pptx to keep memory usage manageable on free tier.
-    Uses Pillow only when available; otherwise leaves the file as-is."""
     try:
         from PIL import Image
     except Exception:
@@ -33,24 +42,16 @@ def shrink_pptx(in_bytes, max_image_kb=300):
                     if len(data) > max_image_kb * 1024:
                         try:
                             img = Image.open(io.BytesIO(data))
-                            img = img.convert("RGB") if img.mode in ("RGBA", "P") and lname.endswith((".jpg", ".jpeg")) else img
-                            # Cap dimensions to 1600px on the long side
                             max_dim = 1600
                             if max(img.size) > max_dim:
                                 scale = max_dim / max(img.size)
                                 img = img.resize((int(img.size[0]*scale), int(img.size[1]*scale)), Image.LANCZOS)
                             buf = io.BytesIO()
-                            if lname.endswith(".png"):
-                                # Convert PNG to JPEG when possible to save lots of space
-                                try:
-                                    img.convert("RGB").save(buf, "JPEG", quality=78, optimize=True)
-                                    data = buf.getvalue()
-                                except Exception:
-                                    img.save(buf, "PNG", optimize=True)
-                                    data = buf.getvalue()
-                            else:
-                                img.save(buf, "JPEG", quality=78, optimize=True)
+                            try:
+                                img.convert("RGB").save(buf, "JPEG", quality=78, optimize=True)
                                 data = buf.getvalue()
+                            except Exception:
+                                pass
                         except Exception:
                             pass
                 out_zip.writestr(item, data)
@@ -58,10 +59,8 @@ def shrink_pptx(in_bytes, max_image_kb=300):
     except Exception:
         return in_bytes
 
-@app.route("/convert", methods=["POST", "OPTIONS"])
+@app.route("/convert", methods=["POST"])
 def convert():
-    if request.method == "OPTIONS":
-        return Response(status=204)
     data = request.files["file"].read() if "file" in request.files else request.get_data()
     if not data:
         return jsonify({"error": "no_file"}), 400
@@ -69,7 +68,6 @@ def convert():
         return jsonify({"error": "too_large", "max_mb": 250}), 413
 
     in_size_mb = round(len(data) / (1024*1024), 1)
-    # Pre-compress if file is huge (free tier RAM is tight)
     if len(data) > 30 * 1024 * 1024:
         data = shrink_pptx(data)
 
