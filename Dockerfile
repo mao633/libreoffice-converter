@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu fonts-liberation fonts-noto \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN pip3 install --no-cache-dir flask gunicorn
+RUN pip3 install --no-cache-dir flask gunicorn pillow
 WORKDIR /app
 COPY server.py /app/server.py
 ENV PORT=10000
