@@ -12,5 +12,11 @@ RUN pip3 install --no-cache-dir flask gunicorn pillow
 WORKDIR /app
 COPY server.py /app/server.py
 ENV PORT=10000
+ENV PYTHONUNBUFFERED=1
 EXPOSE 10000
-CMD ["gunicorn", "-w", "1", "--threads", "4", "-b", "0.0.0.0:10000", "--timeout", "240", "server:app"]
+# 1 worker, 1 thread, max-requests 1 -> worker ricreato dopo ogni request
+# (zero memory leak accumulation, importante con LibreOffice + Pillow su 512MB).
+CMD ["gunicorn", "-w", "1", "--threads", "1", "--max-requests", "1", \
+     "-b", "0.0.0.0:10000", "--timeout", "240", \
+     "--access-logfile", "-", "--error-logfile", "-", \
+     "server:app"]
